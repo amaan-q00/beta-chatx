@@ -1,13 +1,12 @@
 "use client";
-import React, { useCallback, useMemo, useState, useEffect, RefObject } from "react";
+import React, { useCallback, useMemo, useState, useEffect } from "react";
 import { useSocket, Message } from "../utils/useSocket";
 import { getViewerId } from "../utils/viewerId";
-import { ChatWindow } from "../components/ChatWindow";
 import { MessageInput } from "../components/MessageInput";
-import { MessageItem } from "../components/MessageItem";
-import { FaTimes, FaEyeSlash } from "react-icons/fa";
 import { VariableSizeList as List } from 'react-window';
 import { MediaSendModal } from "../components/MediaSendModal";
+import { FaEyeSlash, FaTimes } from "react-icons/fa";
+import { MessageItem } from "../components/MessageItem";
 
 function getQueryParam(name: string): string | null {
   if (typeof window === 'undefined') return null;

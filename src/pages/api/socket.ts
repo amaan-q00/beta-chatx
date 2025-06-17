@@ -8,8 +8,6 @@ import type { Message } from '../../utils/useSocket';
 const roomMessages: Record<string, Message[]> = {};
 const oneTimeViews: Record<string, Set<string>> = {};
 
-let io: IOServer | null = null;
-
 export const config = {
   api: {
     bodyParser: false,
@@ -23,7 +21,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
   const server = res.socket.server as typeof res.socket.server & { io?: IOServer };
   if (!server.io) {
-    io = new IOServer(res.socket.server as HTTPServer, {
+    const io = new IOServer(res.socket.server as HTTPServer, {
       path: '/api/socket',
       addTrailingSlash: false,
       cors: {
@@ -50,14 +48,14 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         };
         if (!roomMessages[roomId]) roomMessages[roomId] = [];
         roomMessages[roomId].push(message);
-        io!.to(roomId).emit('message', message);
+        io.to(roomId).emit('message', message);
       });
 
       // Handle one-time media viewed
       socket.on('mediaViewed', ({ messageId, viewerId, roomId }: { messageId: string; viewerId: string; roomId: string }) => {
         if (!oneTimeViews[messageId]) oneTimeViews[messageId] = new Set();
         oneTimeViews[messageId].add(viewerId);
-        io!.to(roomId).emit('mediaViewed', { messageId, viewerId });
+        io.to(roomId).emit('mediaViewed', { messageId, viewerId });
       });
     });
   }
