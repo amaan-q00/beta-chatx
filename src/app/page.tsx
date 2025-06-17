@@ -5,7 +5,7 @@ import { getViewerId } from "../utils/viewerId";
 import { MessageInput } from "../components/MessageInput";
 import { VariableSizeList as List } from 'react-window';
 import { MediaSendModal } from "../components/MediaSendModal";
-import { FaEyeSlash, FaTimes } from "react-icons/fa";
+import { FaEyeSlash, FaTimes, FaSignOutAlt, FaCog } from "react-icons/fa";
 import { MessageItem } from "../components/MessageItem";
 
 function getQueryParam(name: string): string | null {
@@ -20,6 +20,25 @@ function getInitialUsername() {
 function getInitialRoom() {
   if (typeof window === 'undefined') return '';
   return getQueryParam('room') || localStorage.getItem('roomId') || 'main';
+}
+
+// Helper to open data URL in new tab using Blob
+function openDataUrlInNewTab(dataUrl: string) {
+  if (!dataUrl.startsWith('data:')) return;
+  const arr = dataUrl.split(',');
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  if (!mimeMatch) return;
+  const mime = mimeMatch[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  const blob = new Blob([u8arr], { type: mime });
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 export default function Home() {
@@ -83,6 +102,11 @@ export default function Home() {
     sendMessage({ type: 'text', content: text, sender: viewerId });
   }, [sendMessage, viewerId]);
 
+  const addToast = (type: 'error' | 'success', message: string, duration = 3000) => {
+    setToasts((prev) => [...prev, { type, message }]);
+    setTimeout(() => setToasts((prev) => prev.slice(1)), duration);
+  };
+
   const handleMediaSend = useCallback((file: File, oneTime: boolean) => {
     setMediaError(null);
     if (file.size > maxFileSize) {
@@ -93,11 +117,20 @@ export default function Home() {
     setMediaModalOpen(false); // Auto close modal on send
     setUploading(true);
     setMediaProgress(0);
-    // Simulate progress for in-memory upload
+
+    // Add initial toast
+    addToast('success', 'Uploading: 0%', 10000);
+
     const reader = new FileReader();
     reader.onprogress = (e) => {
       if (e.lengthComputable) {
-        setMediaProgress(Math.round((e.loaded / e.total) * 100));
+        const progress = Math.round((e.loaded / e.total) * 100);
+        setMediaProgress(progress);
+        setToasts(prev => prev.map(t =>
+          t.message.startsWith('Uploading:')
+            ? { ...t, message: `Uploading: ${progress}%` }
+            : t
+        ));
       }
     };
     reader.onload = () => {
@@ -111,12 +144,16 @@ export default function Home() {
       });
       setUploading(false);
       setMediaProgress(0);
-      addToast('success', 'Media sent!');
+      setToasts(prev => prev.map(t =>
+        t.message.startsWith('Uploading:')
+          ? { ...t, message: 'Media sent successfully!' }
+          : t
+      ));
     };
     reader.onerror = () => {
       setUploading(false);
       setMediaError('Failed to read file');
-      addToast('error', 'Failed to read file');
+      addToast('error', 'Failed to read file', 5000);
     };
     reader.readAsDataURL(file);
   }, [sendMessage, viewerId]);
@@ -130,11 +167,6 @@ export default function Home() {
       }
     }
   }, [messages, viewerId, markMediaViewed]);
-
-  const addToast = (type: 'error' | 'success', message: string) => {
-    setToasts((prev) => [...prev, { type, message }]);
-    setTimeout(() => setToasts((prev) => prev.slice(1)), 3000);
-  };
 
   // Estimate row height for react-window
   const getItemSize = (index: number) => {
@@ -190,14 +222,15 @@ export default function Home() {
         <div className="flex items-center gap-3">
           <span className="text-sm text-neutral-400">{username}</span>
           <button
-            className="ml-2 px-2 py-1 rounded bg-neutral-800 hover:bg-blue-700 text-xs text-white transition"
+            className="ml-2 px-3 py-1.5 rounded bg-neutral-800 hover:bg-blue-700 text-xs text-white transition flex items-center gap-1.5"
             onClick={() => setShowPrompt(true)}
             title="Change room or name"
           >
+            <FaCog className="text-sm" />
             Change
           </button>
           <button
-            className="ml-2 px-2 py-1 rounded bg-red-700 hover:bg-red-800 text-xs text-white transition"
+            className="ml-2 px-3 py-1.5 rounded bg-red-700 hover:bg-red-800 text-xs text-white transition flex items-center gap-1.5"
             onClick={() => {
               localStorage.clear();
               sessionStorage.clear();
@@ -205,6 +238,7 @@ export default function Home() {
             }}
             title="Exit and clear all data"
           >
+            <FaSignOutAlt className="text-sm" />
             Exit
           </button>
         </div>
@@ -254,12 +288,20 @@ export default function Home() {
       />
       {/* Media Modal */}
       {mediaModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={e => {
+            // Only close if the overlay itself is clicked, not the modal content
+            if (e.target === e.currentTarget) setMediaModal(null);
+          }}
+        >
           <div className="relative bg-neutral-900 rounded-lg p-4 max-w-[90vw] max-h-[80vh] flex flex-col items-center">
+            {/* Move close button here, above all content, with higher z-index */}
             <button
-              className="absolute top-2 right-2 text-white text-xl"
+              className="fixed top-6 right-6 md:top-8 md:right-8 z-60 text-white text-2xl bg-black/60 rounded-full p-2 hover:bg-black/80 focus:outline-none"
               onClick={() => setMediaModal(null)}
               aria-label="Close"
+              style={{ zIndex: 60 }}
             >
               <FaTimes />
             </button>
@@ -276,7 +318,7 @@ export default function Home() {
                     const newCount = expiredClickCount + 1;
                     setExpiredClickCount(newCount);
                     if (newCount >= 5) {
-                      window.open(mediaModal.url, '_blank');
+                      openDataUrlInNewTab(mediaModal.url);
                       setExpiredClickCount(0);
                       setFirstExpiredClick(0);
                     }
@@ -330,7 +372,14 @@ export default function Home() {
       {toasts.length > 0 && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center">
           {toasts.map((t, i) => (
-            <div key={i} className={`px-4 py-2 rounded shadow text-white ${t.type === 'error' ? 'bg-red-700' : 'bg-blue-700'}`}>{t.message}</div>
+            <div 
+              key={i} 
+              className={`px-4 py-2 rounded shadow text-white min-w-[200px] text-center ${
+                t.type === 'error' ? 'bg-red-700' : 'bg-blue-700'
+              }`}
+            >
+              {t.message}
+            </div>
           ))}
         </div>
       )}

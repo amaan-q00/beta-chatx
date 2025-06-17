@@ -29,15 +29,12 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
             <span className="font-semibold text-xs text-neutral-300 truncate max-w-[120px] md:max-w-[200px]">{message.username}</span>
             <span className="text-[10px] text-neutral-500">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
           </div>
-          <div className="relative mt-1 w-full max-w-xs min-w-[120px] min-h-[60px] max-h-[100px] rounded-2xl overflow-hidden shadow" onClick={() => onMediaClick(message)}>
-            <img
-              src={message.content}
-              alt={message.filename}
-              className="w-full h-full object-cover opacity-0 pointer-events-auto"
-              style={{ minHeight: 60, maxHeight: 100 }}
-              tabIndex={0}
-            />
-            <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center cursor-pointer">
+          <div 
+            className="relative mt-1 w-full max-w-xs min-w-[120px] min-h-[60px] max-h-[100px] rounded-2xl overflow-hidden shadow cursor-pointer"
+            onClick={() => onMediaClick(message)}
+          >
+            {/* Hidden image with no src to prevent preview/download */}
+            <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center">
               <FaEyeSlash className="text-2xl mb-2 text-neutral-700" />
               <span className="text-xs text-neutral-300">Media expired</span>
             </div>

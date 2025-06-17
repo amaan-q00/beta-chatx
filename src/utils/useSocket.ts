@@ -33,13 +33,9 @@ export function useSocket(viewerId: string, roomId: string, username: string) {
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
-    fetch('/api/socket');
-  }, []);
-
-  useEffect(() => {
-    const socket = io('/', {
+    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL, {
       path: '/api/socket',
-      transports: ['polling'],
+      transports: ['websocket', 'polling'],
       forceNew: true,
     });
     socketRef.current = socket;
