@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Message } from '../utils/useSocket';
 import { getAvatarColor, getInitials } from '../utils/avatar';
 import { FaLock, FaEyeSlash, FaRegImage, FaExclamationTriangle } from 'react-icons/fa';
@@ -14,6 +14,12 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
   const initials = getInitials(message.username || 'Anon');
   const viewed = message.oneTime && message.viewedBy?.includes(viewerId);
 
+  // Fix hydration: format time on client only
+  const [time, setTime] = useState('');
+  useEffect(() => {
+    setTime(new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }, [message.timestamp]);
+
   // One-time media expired
   if (message.type === 'media' && message.oneTime && viewed && !allowViewExpired) {
     return (
@@ -27,7 +33,7 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
         <div className="flex flex-col min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-xs text-neutral-300 truncate max-w-[120px] md:max-w-[200px]">{message.username}</span>
-            <span className="text-[10px] text-neutral-500">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span className="text-[10px] text-neutral-500">{time}</span>
           </div>
           <div 
             className="relative mt-1 w-full max-w-xs min-w-[120px] min-h-[60px] max-h-[100px] rounded-2xl overflow-hidden shadow cursor-pointer"
@@ -58,7 +64,7 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-xs text-neutral-300 truncate max-w-[120px] md:max-w-[200px]">{message.username}</span>
-              <span className="text-[10px] text-neutral-500">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="text-[10px] text-neutral-500">{time}</span>
             </div>
             <button
               className={`relative flex items-center gap-2 px-4 py-2 rounded-2xl shadow-lg border-2 ${isOwn ? 'border-blue-700' : 'border-neutral-700'} bg-gradient-to-br from-neutral-800 to-neutral-900 hover:scale-105 transition-transform mt-1 w-full max-w-xs`}
@@ -92,7 +98,7 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-xs text-neutral-300 truncate max-w-[120px] md:max-w-[200px]">{message.username}</span>
-              <span className="text-[10px] text-neutral-500">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="text-[10px] text-neutral-500">{time}</span>
             </div>
             <div className="relative flex items-center gap-2 px-4 py-2 rounded-2xl shadow-lg border-2 border-red-700 bg-gradient-to-br from-neutral-800 to-neutral-900 mt-1 w-full max-w-xs text-red-400">
               <FaExclamationTriangle className="text-xl" />
@@ -116,7 +122,7 @@ export function MessageItem({ message, viewerId, onMediaClick, allowViewExpired 
       <div className="flex flex-col min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-xs text-neutral-300 truncate max-w-[120px] md:max-w-[200px]">{message.username}</span>
-          <span className="text-[10px] text-neutral-500">{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          <span className="text-[10px] text-neutral-500">{time}</span>
         </div>
         <div className={`px-4 py-2 rounded-2xl shadow max-w-[80vw] break-words mt-1 ${isOwn ? 'bg-gradient-to-br from-blue-800 to-blue-600 text-white' : 'bg-gradient-to-br from-neutral-800 to-neutral-900 text-neutral-100'}`}
         >

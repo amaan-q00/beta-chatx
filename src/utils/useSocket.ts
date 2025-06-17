@@ -13,6 +13,7 @@ export type Message = {
   username?: string;
   roomId?: string;
   viewedBy?: string[];
+  pending?: boolean; // for optimistic UI
 };
 
 function getViewedMedia(roomId: string, viewerId: string): string[] {
@@ -31,6 +32,53 @@ function setViewedMedia(roomId: string, viewerId: string, ids: string[]) {
 export function useSocket(viewerId: string, roomId: string, username: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const socketRef = useRef<Socket | null>(null);
+
+  // Helper to send media (always chunked, ArrayBuffer)
+  const sendMedia = useCallback((file: File, meta: any, onProgress?: (percent: number) => void) => {
+    const CHUNK_SIZE = 256 * 1024; // 256KB
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = `${Date.now()}-${Math.random()}`;
+    let chunkIndex = 0;
+    function sendNextChunk() {
+      const offset = chunkIndex * CHUNK_SIZE;
+      const slice = file.slice(offset, offset + CHUNK_SIZE);
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Send ArrayBuffer chunk
+        const arrayBuffer = reader.result as ArrayBuffer;
+        socketRef.current?.emit('media-chunk', {
+          uploadId,
+          chunk: arrayBuffer,
+          chunkIndex,
+          totalChunks,
+          meta: { ...meta, mimeType: file.type },
+          roomId,
+        });
+        chunkIndex++;
+        if (chunkIndex < totalChunks) {
+          sendNextChunk();
+        }
+      };
+      reader.readAsArrayBuffer(slice);
+    }
+    sendNextChunk();
+    // Listen for progress events
+    const socket = socketRef.current;
+    if (socket) {
+      const progressHandler = (data: any) => {
+        if (data.uploadId === uploadId && onProgress) {
+          onProgress(data.percent);
+        }
+      };
+      socket.on('upload-progress', progressHandler);
+      // Remove listener after upload is done
+      socket.once('message', (msg: any) => {
+        if (msg && msg.filename === meta.filename) {
+          socket.off('upload-progress', progressHandler);
+        }
+      });
+    }
+  }, [roomId]);
 
   useEffect(() => {
     const socket = io(process.env.NEXT_PUBLIC_SERVER_URL, {
@@ -62,6 +110,56 @@ export function useSocket(viewerId: string, roomId: string, username: string) {
       );
     });
 
+    // Chunked media receive (binary)
+    let chunkBuffers: Record<string, { chunks: ArrayBuffer[]; meta: any; totalChunks: number }> = {};
+    socket.on('media-chunk', (data) => {
+      const { chunk, chunkIndex, totalChunks, meta, uploadId } = data;
+      if (!chunkBuffers[uploadId]) {
+        chunkBuffers[uploadId] = { chunks: [], meta, totalChunks };
+      }
+      chunkBuffers[uploadId].chunks[chunkIndex] = chunk;
+      if (chunkBuffers[uploadId].chunks.filter(Boolean).length === totalChunks) {
+        // Assemble all ArrayBuffers into a single Blob
+        const allChunks = chunkBuffers[uploadId].chunks;
+        const blob = new Blob(allChunks, { type: meta.mimeType });
+        const objectUrl = URL.createObjectURL(blob);
+        setMessages((prev) => [
+          ...prev,
+          {
+            ...meta,
+            content: objectUrl,
+            timestamp: Date.now(),
+            id: uploadId || `${Date.now()}-${Math.random()}`,
+          },
+        ]);
+        delete chunkBuffers[uploadId];
+      }
+    });
+
+    // Listen for assembled binary from server
+    socket.on('media-binary', (data) => {
+      const { buffer, mimeType, ...meta } = data;
+      // Convert buffer (Node.js Buffer or ArrayBuffer) to Uint8Array
+      let arrBuf;
+      if (buffer instanceof ArrayBuffer) {
+        arrBuf = buffer;
+      } else if (buffer && buffer.type === 'Buffer' && Array.isArray(buffer.data)) {
+        arrBuf = new Uint8Array(buffer.data).buffer;
+      } else {
+        arrBuf = buffer;
+      }
+      const blob = new Blob([arrBuf], { type: mimeType });
+      const objectUrl = URL.createObjectURL(blob);
+      setMessages((prev) => [
+        ...prev,
+        {
+          ...meta,
+          content: objectUrl,
+          timestamp: Date.now(),
+        },
+      ]);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -80,5 +178,5 @@ export function useSocket(viewerId: string, roomId: string, username: string) {
     socketRef.current?.emit('mediaViewed', { messageId, viewerId, roomId });
   }, [viewerId, roomId]);
 
-  return { messages, sendMessage, markMediaViewed };
+  return { messages, sendMessage, markMediaViewed, sendMedia, socketRef };
 } 

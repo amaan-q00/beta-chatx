@@ -1,11 +1,11 @@
 "use client";
-import React, { useCallback, useMemo, useState, useEffect } from "react";
+import React, { useCallback, useMemo, useState, useEffect, useRef } from "react";
 import { useSocket, Message } from "../utils/useSocket";
 import { getViewerId } from "../utils/viewerId";
 import { MessageInput } from "../components/MessageInput";
 import { VariableSizeList as List } from 'react-window';
 import { MediaSendModal } from "../components/MediaSendModal";
-import { FaEyeSlash, FaTimes, FaSignOutAlt, FaCog } from "react-icons/fa";
+import { FaEyeSlash, FaTimes, FaSignOutAlt, FaCog, FaSpinner } from "react-icons/fa";
 import { MessageItem } from "../components/MessageItem";
 
 function getQueryParam(name: string): string | null {
@@ -48,7 +48,7 @@ export default function Home() {
   const [showPrompt, setShowPrompt] = useState(!username);
   const [unreadDivider, setUnreadDivider] = useState<number | null>(null);
   const chatRef = React.useRef<HTMLDivElement>(null);
-  const { messages, sendMessage, markMediaViewed } = useSocket(viewerId, roomId, username);
+  const { messages, sendMessage, markMediaViewed, sendMedia, socketRef } = useSocket(viewerId, roomId, username);
   const [mediaModal, setMediaModal] = useState<{msg: Message, url: string} | null>(null);
   const [loading, setLoading] = useState(false);
   const allowViewExpired = useMemo(() => !!getQueryParam('secret'), []);
@@ -62,6 +62,8 @@ export default function Home() {
   const [mediaProgress, setMediaProgress] = useState(0);
   const maxFileSize = 50 * 1024 * 1024; // 50MB
   const [uploading, setUploading] = useState(false);
+  const [pendingMessages, setPendingMessages] = useState<any[]>([]);
+  const uploadProgressRef = useRef<{ [id: string]: { loaded: number; total: number } }>({});
 
   useEffect(() => { setIsClient(true); }, []);
 
@@ -98,6 +100,49 @@ export default function Home() {
     setFirstExpiredClick(0);
   }, [mediaModal]);
 
+  // Register service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  }, []);
+
+  // Listen for upload progress from service worker
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    function onMessage(event: MessageEvent) {
+      const { type, id, loaded, total, response, status } = event.data || {};
+      if (type === 'UPLOAD_PROGRESS') {
+        uploadProgressRef.current = { ...uploadProgressRef.current, [id]: { loaded, total } };
+        setPendingMessages((pending) =>
+          pending.map(msg =>
+            msg.id === id ? { ...msg, loaded, total } : msg
+          )
+        );
+      } else if (type === 'UPLOAD_DONE' && status === 200 && response.url) {
+        // Send the image URL via Socket.IO
+        const msg = pendingMessages.find(m => m.id === id);
+        if (msg) {
+          sendMessage({
+            type: 'media',
+            content: response.url,
+            mediaType: msg.mediaType,
+            filename: msg.filename,
+            oneTime: msg.oneTime,
+            sender: viewerId,
+          });
+        }
+        setPendingMessages((pending) => pending.filter(m => m.id !== id));
+      } else if (type === 'UPLOAD_ERROR') {
+        setPendingMessages((pending) => pending.map(msg =>
+          msg.id === id ? { ...msg, error: true } : msg
+        ));
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [pendingMessages, sendMessage, viewerId]);
+
   const handleSend = useCallback((text: string) => {
     sendMessage({ type: 'text', content: text, sender: viewerId });
   }, [sendMessage, viewerId]);
@@ -118,45 +163,63 @@ export default function Home() {
     setUploading(true);
     setMediaProgress(0);
 
-    // Add initial toast
-    addToast('success', 'Uploading: 0%', 10000);
-
-    const reader = new FileReader();
-    reader.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const progress = Math.round((e.loaded / e.total) * 100);
-        setMediaProgress(progress);
-        setToasts(prev => prev.map(t =>
-          t.message.startsWith('Uploading:')
-            ? { ...t, message: `Uploading: ${progress}%` }
-            : t
-        ));
-      }
+    // Add pending message with unique id
+    const tempId = `pending-${Date.now()}-${Math.random()}`;
+    const pendingMsg = {
+      id: tempId,
+      type: 'media',
+      content: '',
+      mediaType: file.type,
+      filename: file.name,
+      oneTime,
+      sender: viewerId,
+      username,
+      pending: true,
+      loaded: 0,
+      total: file.size,
+      percent: 0,
     };
-    reader.onload = () => {
-      sendMessage({
-        type: 'media',
-        content: reader.result as string,
-        mediaType: file.type,
+    setPendingMessages((prev) => [...prev, pendingMsg]);
+
+    // Use sendMedia from useSocket
+    sendMedia(
+      file,
+      {
+        tempId,
         filename: file.name,
+        mediaType: file.type,
         oneTime,
         sender: viewerId,
-      });
-      setUploading(false);
-      setMediaProgress(0);
-      setToasts(prev => prev.map(t =>
-        t.message.startsWith('Uploading:')
-          ? { ...t, message: 'Media sent successfully!' }
-          : t
-      ));
-    };
-    reader.onerror = () => {
-      setUploading(false);
-      setMediaError('Failed to read file');
-      addToast('error', 'Failed to read file', 5000);
-    };
-    reader.readAsDataURL(file);
-  }, [sendMessage, viewerId]);
+        username,
+      },
+      (percent) => {
+        setPendingMessages((pending) =>
+          pending.map(msg =>
+            msg.id === tempId ? { ...msg, percent } : msg
+          )
+        );
+      }
+    );
+    setUploading(false);
+    setMediaProgress(0);
+  }, [sendMedia, viewerId, username]);
+
+  // Remove pending message when real message arrives
+  useEffect(() => {
+    if (pendingMessages.length === 0) return;
+    setPendingMessages((pending) =>
+      pending.filter(pendingMsg =>
+        !messages.some(
+          m =>
+            m.type === 'media' &&
+            m.sender === pendingMsg.sender &&
+            m.filename === pendingMsg.filename &&
+            m.content === pendingMsg.content &&
+            !m.pending
+        )
+      )
+    );
+  }, [messages]);
 
   const handleMediaClick = useCallback((msg: Message) => {
     if (msg.type === 'media') {
@@ -170,7 +233,13 @@ export default function Home() {
 
   // Estimate row height for react-window
   const getItemSize = (index: number) => {
-    const msg = messages[index];
+    let msg;
+    if (index < messages.length) {
+      msg = messages[index];
+    } else {
+      msg = pendingMessages[index - messages.length];
+    }
+    if (!msg) return 64; // fallback size
     if (msg.type === 'media') return 120;
     if ((msg.content || '').length > 200) return 100;
     return 64;
@@ -182,6 +251,20 @@ export default function Home() {
       listRef.current.scrollToItem(messages.length - 1, 'end');
     }
   }, [messages.length]);
+
+  useEffect(() => {
+    if (!socketRef?.current) return;
+    const socket = socketRef.current;
+    const handler = (data: any) => {
+      setPendingMessages((pending) =>
+        pending.filter(msg =>
+          !(msg.filename === data.filename && msg.sender === viewerId)
+        )
+      );
+    };
+    socket.on('media-binary', handler);
+    return () => { socket.off('media-binary', handler); };
+  }, [viewerId, socketRef]);
 
   if (showPrompt) {
     return (
@@ -248,14 +331,19 @@ export default function Home() {
         {isClient && (
           <List
             height={window.innerHeight ? window.innerHeight - 160 : 600}
-            itemCount={messages.length}
+            itemCount={messages.length + pendingMessages.length}
             itemSize={getItemSize}
             width={"100%"}
             ref={listRef}
             className="w-full"
           >
             {({ index, style }: { index: number; style: React.CSSProperties }) => {
-              const msg = messages[index];
+              let msg;
+              if (index < messages.length) {
+                msg = messages[index];
+              } else {
+                msg = pendingMessages[index - messages.length];
+              }
               return (
                 <div style={style} key={msg.id} className={msg.sender === viewerId ? 'self-end flex flex-col items-end' : 'self-start flex flex-col items-start'}>
                   <MessageItem
@@ -264,6 +352,19 @@ export default function Home() {
                     onMediaClick={handleMediaClick}
                     allowViewExpired={allowViewExpired}
                   />
+                  {/* Spinner and progress for pending media */}
+                  {msg.pending && msg.type === 'media' && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
+                      <FaSpinner className="animate-spin text-3xl text-blue-400 bg-black/60 rounded-full p-2 mb-2" />
+                      {typeof msg.percent === 'number' && (
+                        <div className="w-32 bg-neutral-800 rounded h-2 overflow-hidden mb-1">
+                          <div className="bg-blue-600 h-2 transition-all" style={{ width: `${msg.percent}%` }} />
+                        </div>
+                      )}
+                      <div className="text-xs text-neutral-400">{msg.percent || 0}%</div>
+                      {msg.error && <div className="text-red-500 text-xs mt-2">Upload failed</div>}
+                    </div>
+                  )}
                 </div>
               );
             }}
@@ -347,7 +448,7 @@ export default function Home() {
               </div>
             ) : mediaModal.msg.type === 'media' && (mediaModal.msg.mediaType?.startsWith('image')) ? (
               <img
-                src={mediaModal.url}
+                src={mediaModal.msg.content && mediaModal.msg.content.startsWith('data:') ? mediaModal.msg.content : mediaModal.url}
                 alt={mediaModal.msg.filename}
                 className="max-w-full max-h-[70vh] rounded shadow"
               />
