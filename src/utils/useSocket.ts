@@ -39,7 +39,7 @@ export function useSocket(viewerId: string, roomId: string, username: string) {
   useEffect(() => {
     const socket = io('/', {
       path: '/api/socket',
-      transports: ['websocket'],
+      transports: ['polling'],
       forceNew: true,
     });
     socketRef.current = socket;
